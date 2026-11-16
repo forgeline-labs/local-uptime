@@ -1,0 +1,32 @@
+[project]
+name = "local-uptime"
+version = "0.1.0"
+description = "Single-round uptime monitor for loopback HTTP endpoints with local JSON history"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Forgeline Labs" }]
+dependencies = []
+
+[project.optional-dependencies]
+# Development only; the runtime uses the Python standard library exclusively.
+dev = [
+    "pytest==9.0.3",
+    "ruff==0.15.22",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = [".venv"]
+include = ["app", "*.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.format]
+quote-style = "double"
