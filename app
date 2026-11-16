@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import argparse
 import http.client
+import io
 import json
 import os
 import re
 import sys
 import tempfile
 import time
+from functools import partial
 
 PRODUCT = "local-uptime"
 VERSION = "0.1.0"
@@ -258,25 +260,62 @@ def write_state(path: str, state: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
+class DeadlineReader(io.RawIOBase):
+    """Apply the same deadline before every socket read, even inside readline."""
+
+    def __init__(self, raw, sock, deadline):
+        self.raw = raw
+        self.sock = sock
+        self.deadline = deadline
+
+    def readable(self):
+        return True
+
+    def readinto(self, buffer):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("probe deadline exceeded")
+        self.sock.settimeout(remaining)
+        return self.raw.readinto(buffer)
+
+    def close(self):
+        try:
+            self.raw.close()
+        finally:
+            super().close()
+
+
+class DeadlineResponse(http.client.HTTPResponse):
+    def __init__(self, sock, *, deadline, **kwargs):
+        super().__init__(sock, **kwargs)
+        # Keep SocketIO's ownership of the socket when HTTPConnection detaches it.
+        self.fp = io.BufferedReader(DeadlineReader(self.fp.detach(), sock, deadline))
+
+
 def probe(port: int, path: str) -> tuple[int | None, bool]:
     """Perform one GET request; return (status, up) with failures as (None, False)."""
-    started = time.monotonic()
+    deadline = time.monotonic() + TIMEOUT_SECONDS
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=TIMEOUT_SECONDS)
+    connection.response_class = partial(DeadlineResponse, deadline=deadline)
     try:
+        connection.connect()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None, False
+        connection.sock.settimeout(remaining)
         connection.request(
             "GET",
             path,
             headers={"Host": f"127.0.0.1:{port}", "Connection": "close"},
         )
-        response = connection.getresponse()
-        remaining = TIMEOUT_SECONDS - (time.monotonic() - started)
-        if remaining <= 0:
-            return None, False
-        if connection.sock is not None:
-            connection.sock.settimeout(remaining)
-        body = response.read(MAX_BODY + 1)
-        if len(body) > MAX_BODY:
-            return None, False
+        with connection.getresponse() as response:
+            body = response.read(MAX_BODY + 1)
+            if (
+                len(body) > MAX_BODY
+                or response.length not in (None, 0)
+                or time.monotonic() >= deadline
+            ):
+                return None, False
         status = response.status
         return status, 200 <= status <= 299
     except Exception:
