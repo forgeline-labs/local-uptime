@@ -28,37 +28,27 @@ The history is capped at 1000 rounds and assumes a single writer.
 
 ## Quickstart
 
-```sh
-# From the repository root. Start any local HTTP server for the demo:
-mkdir -p demo && echo "hello" > demo/index.html
-(cd demo && python -m http.server 8000 --bind 127.0.0.1) &
-SERVER_PID=$!
+Requires Python 3.12, curl and a POSIX shell. Run all steps from the repository
+root in the same shell, with port **8765 free** and no `uptime-example.json`.
+New checked-in fixtures are `fixtures/targets.json` and `fixtures/www/index.html`.
+The HTTP server is only a demo target: local-uptime itself is a one-round
+monitor. Startup waits for the target to answer; server logs go to
+`uptime-server.log`. Reusing `--at 0` fails with exit 2. The final step
+stops and reaps the target (the shell wait returns 143 after SIGTERM).
 
-cat > targets.json <<'JSON'
-[{"id":"api","port":8000,"path":"/"}]
-JSON
-
-python app check targets.json --state state.json --at 0
-# {"at":0,"results":[{"id":"api","status":200,"up":true}]}
-
-python app report --state state.json
-# {"runs":[{"at":0,"results":[{"id":"api","status":200,"up":true}]}],"summary":[{"id":"api","checks":1,"up":1,"down":0}]}
-
-kill $SERVER_PID
+```console
+$ python -m http.server 8765 --bind 127.0.0.1 --directory fixtures/www > uptime-server.log 2>&1 & server_pid=$!; until curl -fsS http://127.0.0.1:8765/ 2>/dev/null; do sleep 0.1; done
+hello
+$ python app check fixtures/targets.json --state uptime-example.json --at 0
+{"at":0,"results":[{"id":"demo","status":200,"up":true}]}
+$ python app report --state uptime-example.json
+{"runs":[{"at":0,"results":[{"id":"demo","status":200,"up":true}]}],"summary":[{"id":"demo","checks":1,"up":1,"down":0}]}
+$ python app check fixtures/targets.json --state uptime-example.json --at 0
+error: --at must be strictly greater than the last run
+$ echo $?
+2
+$ kill "$server_pid"; wait "$server_pid" 2>/dev/null
 ```
-
-A failing probe still exits `0` and is recorded as data:
-
-```sh
-cat > targets.json <<'JSON'
-[{"id":"api","port":8000,"path":"/"},{"id":"dead","port":9,"path":"/health"}]
-JSON
-python app check targets.json --state state.json --at 1000
-# {"at":1000,"results":[{"id":"api","status":null,"up":false},{"id":"dead","status":null,"up":false}]}
-```
-
-(`./app` and `python app` are equivalent; the file is executable with a
-`#!/usr/bin/env python3` shebang.)
 
 ## CLI
 
